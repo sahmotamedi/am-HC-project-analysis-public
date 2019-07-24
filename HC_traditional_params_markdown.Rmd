@@ -1,0 +1,942 @@
+---
+title: "Retinal Layer Thicknesses Analysis in Healthy Controls"
+runtime: shiny
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+```
+
+```{r data.preparation.chunk}
+## Main chunk, data preparation and calculations
+# Include libraries
+library(knitr)
+library(ggplot2)
+library(stringr)
+library(lmerTest)
+library(MuMIn)
+library(Hmisc)
+library(DT)
+library(pracma)
+library(ICC)
+library(dplyr)
+library(plyr)
+library(lubridate)
+
+# Read the traditional parameters and patient information table
+patients.info.table <- read.csv("./Data/patient_lists_anonymized.csv")
+rnfl.table <- read.csv('./Data/OCT_Measurements/thickness_report_ILM_RNFL_6_mm.csv')
+gcip.table <- read.csv('./Data/OCT_Measurements/thickness_report_RNFL_IPL_6_mm.csv')
+inl.table <- read.csv('./Data/OCT_Measurements/thickness_report_IPL_INL_6_mm.csv')
+trt.table <- read.csv('./Data/OCT_Measurements/thickness_report_ILM_BM_6_mm.csv')
+eye.non.oct.measurements <- read.csv("./Data/Non_OCT_Measurements/All.csv")
+icc.analysis.data <- read.csv('./Data/ICCData.csv')
+icc.analysis.data.intra.rater <- read.csv('./Data/ICCData_sameGrader.csv')
+samirix.heyex.comparison.table <- read.csv("./Data/Heyex_Samirix_comparison_alltogehter.csv")
+
+# Change the eye labels in traditional parameters tbles from R and L to OD and OS
+levels(rnfl.table$Eye)[levels(rnfl.table$Eye)=="R"] <- "OD"
+levels(rnfl.table$Eye)[levels(rnfl.table$Eye)=="L"] <- "OS"
+levels(gcip.table$Eye)[levels(gcip.table$Eye)=="R"] <- "OD"
+levels(gcip.table$Eye)[levels(gcip.table$Eye)=="L"] <- "OS"
+levels(inl.table$Eye)[levels(inl.table$Eye)=="R"] <- "OD"
+levels(inl.table$Eye)[levels(inl.table$Eye)=="L"] <- "OS"
+levels(trt.table$Eye)[levels(trt.table$Eye)=="R"] <- "OD"
+levels(trt.table$Eye)[levels(trt.table$Eye)=="L"] <- "OS"
+
+# Form the params table and pick the first columns of the params table (EYE_ID, EYE) from one of the traditional params table 
+params.table.traditionals.hc <- data.frame(Eye_ID = rnfl.table$PatientID, Eye = rnfl.table$Eye)
+
+########## Add traditional params
+# Calculate the traditional eye parameters (pRNFL, GCIP, etc) from the tables
+roi.list <- c("Total", "Fovea", "Nasal_Inner", "Superior_Inner", "Temporal_Inner", "Inferior_Inner", "Nasal_Outer", "Superior_Outer", "Temporal_Outer", "Inferior_Outer",
+              "Nasal_Total", "Sperior_Total", "Temporal_Total", "Inferior_Total", "Inner_Ring", "Outer_Ring", "Fovea_Inner_Ring")
+rnfl.temp <- data.frame(matrix(nrow = length(params.table.traditionals.hc$Eye_ID), ncol = 17))
+gcip.temp <- data.frame(matrix(nrow = length(params.table.traditionals.hc$Eye_ID), ncol = 17))
+inl.temp <- data.frame(matrix(nrow = length(params.table.traditionals.hc$Eye_ID), ncol = 17))
+trt.temp <- data.frame(matrix(nrow = length(params.table.traditionals.hc$Eye_ID), ncol = 17))
+for(i.row in 1:length(params.table.traditionals.hc$Eye_ID)){
+  i.found.petient.eye.rnfl <- (rnfl.table$PatientID == params.table.traditionals.hc$Eye_ID[i.row]) & (rnfl.table$Eye == params.table.traditionals.hc$Eye[i.row])
+  i.found.petient.eye.gcip <- (gcip.table$PatientID == params.table.traditionals.hc$Eye_ID[i.row]) & (gcip.table$Eye == params.table.traditionals.hc$Eye[i.row])
+  i.found.petient.eye.inl <- (inl.table$PatientID == params.table.traditionals.hc$Eye_ID[i.row]) & (inl.table$Eye == params.table.traditionals.hc$Eye[i.row])
+  i.found.petient.eye.trt <- (trt.table$PatientID == params.table.traditionals.hc$Eye_ID[i.row]) & (trt.table$Eye == params.table.traditionals.hc$Eye[i.row])
+  # Calculate RNFL in different ROIs
+  rnfl.temp[i.row, 1] <- round((t(c(rnfl.table$'Mean_C0_micron'[i.found.petient.eye.rnfl], rnfl.table$'Mean_N1_micron'[i.found.petient.eye.rnfl], rnfl.table$'Mean_T1_micron'[i.found.petient.eye.rnfl],
+                              rnfl.table$'Mean_S1_micron'[i.found.petient.eye.rnfl], rnfl.table$'Mean_I1_micron'[i.found.petient.eye.rnfl], rnfl.table$'Mean_N2_micron'[i.found.petient.eye.rnfl],
+                              rnfl.table$'Mean_T2_micron'[i.found.petient.eye.rnfl], rnfl.table$'Mean_S2_micron'[i.found.petient.eye.rnfl], rnfl.table$'Mean_I2_micron'[i.found.petient.eye.rnfl])) 
+                              %*% c(0.25, 0.5, 0.5, 0.5, 0.5, 1.6875, 1.6875, 1.6875, 1.6875))/9, 2)
+  rnfl.temp[i.row, 2:10] <- c(rnfl.table$'Mean_C0_micron'[i.found.petient.eye.rnfl], rnfl.table$'Mean_N1_micron'[i.found.petient.eye.rnfl], rnfl.table$'Mean_S1_micron'[i.found.petient.eye.rnfl],
+                              rnfl.table$'Mean_T1_micron'[i.found.petient.eye.rnfl], rnfl.table$'Mean_I1_micron'[i.found.petient.eye.rnfl], rnfl.table$'Mean_N2_micron'[i.found.petient.eye.rnfl],
+                              rnfl.table$'Mean_S2_micron'[i.found.petient.eye.rnfl], rnfl.table$'Mean_T2_micron'[i.found.petient.eye.rnfl], rnfl.table$'Mean_I2_micron'[i.found.petient.eye.rnfl])
+  rnfl.temp[i.row, 11:14] <- round(c((t(c(rnfl.table$'Mean_N1_micron'[i.found.petient.eye.rnfl], rnfl.table$'Mean_N2_micron'[i.found.petient.eye.rnfl])) %*% c(0.5, 1.6875))/2.1875,
+                                     (t(c(rnfl.table$'Mean_S1_micron'[i.found.petient.eye.rnfl], rnfl.table$'Mean_S2_micron'[i.found.petient.eye.rnfl])) %*% c(0.5, 1.6875))/2.1875,
+                                     (t(c(rnfl.table$'Mean_T1_micron'[i.found.petient.eye.rnfl], rnfl.table$'Mean_T2_micron'[i.found.petient.eye.rnfl])) %*% c(0.5, 1.6875))/2.1875,
+                                     (t(c(rnfl.table$'Mean_I1_micron'[i.found.petient.eye.rnfl], rnfl.table$'Mean_I2_micron'[i.found.petient.eye.rnfl])) %*% c(0.5, 1.6875))/2.1875), 2)
+  rnfl.temp[i.row, 15:16] <- round(c((rnfl.table$'Mean_N1_micron'[i.found.petient.eye.rnfl] + rnfl.table$'Mean_S1_micron'[i.found.petient.eye.rnfl] 
+                                      + rnfl.table$'Mean_T1_micron'[i.found.petient.eye.rnfl] + rnfl.table$'Mean_I1_micron'[i.found.petient.eye.rnfl])/4, 
+                                     (rnfl.table$'Mean_N2_micron'[i.found.petient.eye.rnfl] + rnfl.table$'Mean_S2_micron'[i.found.petient.eye.rnfl] 
+                                      + rnfl.table$'Mean_T2_micron'[i.found.petient.eye.rnfl] + rnfl.table$'Mean_I2_micron'[i.found.petient.eye.rnfl])/4), 2)
+  rnfl.temp[i.row, 17] <- round((t(c(rnfl.table$'Mean_C0_micron'[i.found.petient.eye.rnfl], rnfl.table$'Mean_N1_micron'[i.found.petient.eye.rnfl], rnfl.table$'Mean_T1_micron'[i.found.petient.eye.rnfl],
+                                     rnfl.table$'Mean_S1_micron'[i.found.petient.eye.rnfl], rnfl.table$'Mean_I1_micron'[i.found.petient.eye.rnfl])) 
+                                     %*% c(0.25, 0.5, 0.5, 0.5, 0.5))/2.25, 2)
+  # Calculate GCIP in different ROIs
+  gcip.temp[i.row, 1] <- round((t(c(gcip.table$'Mean_C0_micron'[i.found.petient.eye.gcip], gcip.table$'Mean_N1_micron'[i.found.petient.eye.gcip], gcip.table$'Mean_T1_micron'[i.found.petient.eye.gcip],
+                              gcip.table$'Mean_S1_micron'[i.found.petient.eye.gcip], gcip.table$'Mean_I1_micron'[i.found.petient.eye.gcip], gcip.table$'Mean_N2_micron'[i.found.petient.eye.gcip],
+                              gcip.table$'Mean_T2_micron'[i.found.petient.eye.gcip], gcip.table$'Mean_S2_micron'[i.found.petient.eye.gcip], gcip.table$'Mean_I2_micron'[i.found.petient.eye.gcip])) 
+                              %*% c(0.25, 0.5, 0.5, 0.5, 0.5, 1.6875, 1.6875, 1.6875, 1.6875))/9, 2)
+  gcip.temp[i.row, 2:10] <- c(gcip.table$'Mean_C0_micron'[i.found.petient.eye.gcip], gcip.table$'Mean_N1_micron'[i.found.petient.eye.gcip], gcip.table$'Mean_S1_micron'[i.found.petient.eye.gcip],
+                              gcip.table$'Mean_T1_micron'[i.found.petient.eye.gcip], gcip.table$'Mean_I1_micron'[i.found.petient.eye.gcip], gcip.table$'Mean_N2_micron'[i.found.petient.eye.gcip],
+                              gcip.table$'Mean_S2_micron'[i.found.petient.eye.gcip], gcip.table$'Mean_T2_micron'[i.found.petient.eye.gcip], gcip.table$'Mean_I2_micron'[i.found.petient.eye.gcip])
+  gcip.temp[i.row, 11:14] <- round(c((t(c(gcip.table$'Mean_N1_micron'[i.found.petient.eye.gcip], gcip.table$'Mean_N2_micron'[i.found.petient.eye.gcip])) %*% c(0.5, 1.6875))/2.1875,
+                                     (t(c(gcip.table$'Mean_S1_micron'[i.found.petient.eye.gcip], gcip.table$'Mean_S2_micron'[i.found.petient.eye.gcip])) %*% c(0.5, 1.6875))/2.1875,
+                                     (t(c(gcip.table$'Mean_T1_micron'[i.found.petient.eye.gcip], gcip.table$'Mean_T2_micron'[i.found.petient.eye.gcip])) %*% c(0.5, 1.6875))/2.1875,
+                                     (t(c(gcip.table$'Mean_I1_micron'[i.found.petient.eye.gcip], gcip.table$'Mean_I2_micron'[i.found.petient.eye.gcip])) %*% c(0.5, 1.6875))/2.1875), 2)
+  gcip.temp[i.row, 15:16] <- round(c((gcip.table$'Mean_N1_micron'[i.found.petient.eye.gcip] + gcip.table$'Mean_S1_micron'[i.found.petient.eye.gcip] 
+                                      + gcip.table$'Mean_T1_micron'[i.found.petient.eye.gcip] + gcip.table$'Mean_I1_micron'[i.found.petient.eye.gcip])/4, 
+                                     (gcip.table$'Mean_N2_micron'[i.found.petient.eye.gcip] + gcip.table$'Mean_S2_micron'[i.found.petient.eye.gcip] 
+                                      + gcip.table$'Mean_T2_micron'[i.found.petient.eye.gcip] + gcip.table$'Mean_I2_micron'[i.found.petient.eye.gcip])/4), 2)
+  gcip.temp[i.row, 17] <- round((t(c(gcip.table$'Mean_C0_micron'[i.found.petient.eye.gcip], gcip.table$'Mean_N1_micron'[i.found.petient.eye.gcip], gcip.table$'Mean_T1_micron'[i.found.petient.eye.gcip],
+                                     gcip.table$'Mean_S1_micron'[i.found.petient.eye.gcip], gcip.table$'Mean_I1_micron'[i.found.petient.eye.gcip])) 
+                                     %*% c(0.25, 0.5, 0.5, 0.5, 0.5))/2.25, 2)
+  # Calculate INL in different ROIs
+  inl.temp[i.row, 1] <- round((t(c(inl.table$'Mean_C0_micron'[i.found.petient.eye.inl], inl.table$'Mean_N1_micron'[i.found.petient.eye.inl], inl.table$'Mean_T1_micron'[i.found.petient.eye.inl],
+                             inl.table$'Mean_S1_micron'[i.found.petient.eye.inl], inl.table$'Mean_I1_micron'[i.found.petient.eye.inl], inl.table$'Mean_N2_micron'[i.found.petient.eye.inl],
+                             inl.table$'Mean_T2_micron'[i.found.petient.eye.inl], inl.table$'Mean_S2_micron'[i.found.petient.eye.inl], inl.table$'Mean_I2_micron'[i.found.petient.eye.inl])) 
+                             %*% c(0.25, 0.5, 0.5, 0.5, 0.5, 1.6875, 1.6875, 1.6875, 1.6875))/9, 2)
+  inl.temp[i.row, 2:10] <- c(inl.table$'Mean_C0_micron'[i.found.petient.eye.inl], inl.table$'Mean_N1_micron'[i.found.petient.eye.inl], inl.table$'Mean_S1_micron'[i.found.petient.eye.inl],
+                              inl.table$'Mean_T1_micron'[i.found.petient.eye.inl], inl.table$'Mean_I1_micron'[i.found.petient.eye.inl], inl.table$'Mean_N2_micron'[i.found.petient.eye.inl],
+                              inl.table$'Mean_S2_micron'[i.found.petient.eye.inl], inl.table$'Mean_T2_micron'[i.found.petient.eye.inl], inl.table$'Mean_I2_micron'[i.found.petient.eye.inl])
+  inl.temp[i.row, 11:14] <- round(c((t(c(inl.table$'Mean_N1_micron'[i.found.petient.eye.inl], inl.table$'Mean_N2_micron'[i.found.petient.eye.inl])) %*% c(0.5, 1.6875))/2.1875,
+                                     (t(c(inl.table$'Mean_S1_micron'[i.found.petient.eye.inl], inl.table$'Mean_S2_micron'[i.found.petient.eye.inl])) %*% c(0.5, 1.6875))/2.1875,
+                                     (t(c(inl.table$'Mean_T1_micron'[i.found.petient.eye.inl], inl.table$'Mean_T2_micron'[i.found.petient.eye.inl])) %*% c(0.5, 1.6875))/2.1875,
+                                     (t(c(inl.table$'Mean_I1_micron'[i.found.petient.eye.inl], inl.table$'Mean_I2_micron'[i.found.petient.eye.inl])) %*% c(0.5, 1.6875))/2.1875), 2)
+  inl.temp[i.row, 15:16] <- round(c((inl.table$'Mean_N1_micron'[i.found.petient.eye.inl] + inl.table$'Mean_S1_micron'[i.found.petient.eye.inl] 
+                                      + inl.table$'Mean_T1_micron'[i.found.petient.eye.inl] + inl.table$'Mean_I1_micron'[i.found.petient.eye.inl])/4, 
+                                     (inl.table$'Mean_N2_micron'[i.found.petient.eye.inl] + inl.table$'Mean_S2_micron'[i.found.petient.eye.inl] 
+                                      + inl.table$'Mean_T2_micron'[i.found.petient.eye.inl] + inl.table$'Mean_I2_micron'[i.found.petient.eye.inl])/4), 2)
+  inl.temp[i.row, 17] <- round((t(c(inl.table$'Mean_C0_micron'[i.found.petient.eye.inl], inl.table$'Mean_N1_micron'[i.found.petient.eye.inl], inl.table$'Mean_T1_micron'[i.found.petient.eye.inl],
+                                     inl.table$'Mean_S1_micron'[i.found.petient.eye.inl], inl.table$'Mean_I1_micron'[i.found.petient.eye.inl])) 
+                                     %*% c(0.25, 0.5, 0.5, 0.5, 0.5))/2.25, 2)
+  # Calculate TRT in different ROIs
+  trt.temp[i.row, 1] <- round((t(c(trt.table$'Mean_C0_micron'[i.found.petient.eye.trt], trt.table$'Mean_N1_micron'[i.found.petient.eye.trt], trt.table$'Mean_T1_micron'[i.found.petient.eye.trt],
+                             trt.table$'Mean_S1_micron'[i.found.petient.eye.trt], trt.table$'Mean_I1_micron'[i.found.petient.eye.trt], trt.table$'Mean_N2_micron'[i.found.petient.eye.trt],
+                             trt.table$'Mean_T2_micron'[i.found.petient.eye.trt], trt.table$'Mean_S2_micron'[i.found.petient.eye.trt], trt.table$'Mean_I2_micron'[i.found.petient.eye.trt])) 
+                             %*% c(0.25, 0.5, 0.5, 0.5, 0.5, 1.6875, 1.6875, 1.6875, 1.6875))/9, 2)
+  trt.temp[i.row, 2:10] <- c(trt.table$'Mean_C0_micron'[i.found.petient.eye.trt], trt.table$'Mean_N1_micron'[i.found.petient.eye.trt], trt.table$'Mean_S1_micron'[i.found.petient.eye.trt],
+                              trt.table$'Mean_T1_micron'[i.found.petient.eye.trt], trt.table$'Mean_I1_micron'[i.found.petient.eye.trt], trt.table$'Mean_N2_micron'[i.found.petient.eye.trt],
+                              trt.table$'Mean_S2_micron'[i.found.petient.eye.trt], trt.table$'Mean_T2_micron'[i.found.petient.eye.trt], trt.table$'Mean_I2_micron'[i.found.petient.eye.trt])
+  trt.temp[i.row, 11:14] <- round(c((t(c(trt.table$'Mean_N1_micron'[i.found.petient.eye.trt], trt.table$'Mean_N2_micron'[i.found.petient.eye.trt])) %*% c(0.5, 1.6875))/2.1875,
+                                     (t(c(trt.table$'Mean_S1_micron'[i.found.petient.eye.trt], trt.table$'Mean_S2_micron'[i.found.petient.eye.trt])) %*% c(0.5, 1.6875))/2.1875,
+                                     (t(c(trt.table$'Mean_T1_micron'[i.found.petient.eye.trt], trt.table$'Mean_T2_micron'[i.found.petient.eye.trt])) %*% c(0.5, 1.6875))/2.1875,
+                                     (t(c(trt.table$'Mean_I1_micron'[i.found.petient.eye.trt], trt.table$'Mean_I2_micron'[i.found.petient.eye.trt])) %*% c(0.5, 1.6875))/2.1875), 2)
+  trt.temp[i.row, 15:16] <- round(c((trt.table$'Mean_N1_micron'[i.found.petient.eye.trt] + trt.table$'Mean_S1_micron'[i.found.petient.eye.trt] 
+                                      + trt.table$'Mean_T1_micron'[i.found.petient.eye.trt] + trt.table$'Mean_I1_micron'[i.found.petient.eye.trt])/4, 
+                                     (trt.table$'Mean_N2_micron'[i.found.petient.eye.trt] + trt.table$'Mean_S2_micron'[i.found.petient.eye.trt] 
+                                      + trt.table$'Mean_T2_micron'[i.found.petient.eye.trt] + trt.table$'Mean_I2_micron'[i.found.petient.eye.trt])/4), 2)
+  trt.temp[i.row, 17] <- round((t(c(trt.table$'Mean_C0_micron'[i.found.petient.eye.trt], trt.table$'Mean_N1_micron'[i.found.petient.eye.trt], trt.table$'Mean_T1_micron'[i.found.petient.eye.trt],
+                                     trt.table$'Mean_S1_micron'[i.found.petient.eye.trt], trt.table$'Mean_I1_micron'[i.found.petient.eye.trt])) 
+                                     %*% c(0.25, 0.5, 0.5, 0.5, 0.5))/2.25, 2)
+}
+# Calculate the inner retina and outer reitna average thickness
+irl.temp <- rnfl.temp + gcip.temp + inl.temp
+orl.temp <- trt.temp - irl.temp
+# Add column names to the formed data frames
+colnames(rnfl.temp) <- paste0("RNFL_micron_", roi.list)
+colnames(gcip.temp) <- paste0("GCIP_micron_", roi.list)
+colnames(inl.temp) <- paste0("INL_micron_", roi.list)
+colnames(trt.temp) <- paste0("TRT_micron_", roi.list)
+colnames(irl.temp) <- paste0("IRL_micron_", roi.list)
+colnames(orl.temp) <- paste0("ORL_micron_", roi.list)
+# Add the params to the params table
+params.table.traditionals.hc <- cbind(params.table.traditionals.hc, rnfl.temp, gcip.temp, inl.temp, trt.temp, irl.temp, orl.temp)
+
+######### Add non OCT params 
+RE.temp <- data.frame(matrix(nrow = length(params.table.traditionals.hc$Eye_ID), ncol = 1))
+HC.VA.temp <- data.frame(matrix(nrow = length(params.table.traditionals.hc$Eye_ID), ncol = 1))
+IOP.temp <- data.frame(matrix(nrow = length(params.table.traditionals.hc$Eye_ID), ncol = 1))
+for(i.row in 1:length(params.table.traditionals.hc$Eye_ID)){
+  i.found.petient.eye <- (eye.non.oct.measurements$EyeID == as.character(params.table.traditionals.hc$Eye_ID[i.row])) & (eye.non.oct.measurements$Eye == params.table.traditionals.hc$Eye[i.row])
+  if (length(which(i.found.petient.eye)) == 1){
+    RE.temp[i.row, 1] <- eye.non.oct.measurements$RE[i.found.petient.eye]
+    HC.VA.temp[i.row, 1] <- eye.non.oct.measurements$HC_VA[i.found.petient.eye]
+    IOP.temp[i.row, 1] <- eye.non.oct.measurements$IOP[i.found.petient.eye]
+  }
+}
+# Add the non OCT params to the table 
+params.table.traditionals.hc[,length(colnames(params.table.traditionals.hc))+1] <- RE.temp
+params.table.traditionals.hc[,length(colnames(params.table.traditionals.hc))+1] <- HC.VA.temp
+params.table.traditionals.hc[,length(colnames(params.table.traditionals.hc))+1] <- IOP.temp
+colnames(params.table.traditionals.hc)[(length(colnames(params.table.traditionals.hc))-2):length(colnames(params.table.traditionals.hc))] <- c("Refraction_Error", "High_Contrast_Acuity", "Inter_Ocular_Pressure")
+
+###### Add sex and age to the table 
+# Add sex and age to the params.table.traditionals.hc
+sex.temp <- data.frame(matrix(nrow = length(params.table.traditionals.hc$Eye_ID), ncol = 1))
+age.temp <- data.frame(matrix(nrow = length(params.table.traditionals.hc$Eye_ID), ncol = 1))
+for(i.row in 1:length(params.table.traditionals.hc$Eye_ID)){
+  sex.temp[i.row, 1] <- as.vector(patients.info.table$Sex[str_detect(patients.info.table$Patient.ID, as.vector(params.table.traditionals.hc$Eye_ID[i.row]))])
+  age.temp[i.row, 1] <- as.vector(patients.info.table$Age[str_detect(patients.info.table$Patient.ID, as.vector(params.table.traditionals.hc$Eye_ID[i.row]))])
+}
+params.table.traditionals.hc[,length(colnames(params.table.traditionals.hc))+1] <- age.temp
+params.table.traditionals.hc[,length(colnames(params.table.traditionals.hc))+1] <- sex.temp
+colnames(params.table.traditionals.hc)[(length(colnames(params.table.traditionals.hc))-1):length(colnames(params.table.traditionals.hc))] <- c("Age", "Sex")
+params.table.traditionals.hc$Type <- "HC"
+
+###### Two eyes table
+# Form a separate table which only contains the subjects with both eyes measured 
+params.table.traditionals.hc.both.eyes <- params.table.traditionals.hc
+eyes.count <- plyr::count(params.table.traditionals.hc.both.eyes, "Eye_ID")
+params.table.traditionals.hc.both.eyes$Eye_ID <- factor(params.table.traditionals.hc.both.eyes$Eye_ID, levels(factor(eyes.count[eyes.count$freq==2, 1])))
+params.table.traditionals.hc.both.eyes <- params.table.traditionals.hc.both.eyes[!is.na(params.table.traditionals.hc.both.eyes$Eye_ID), ]
+rownames(params.table.traditionals.hc.both.eyes) <- NULL
+
+####### interocular difference tables 
+# Form a separate table contains the difference of parameters (param_OD - param_OS) 
+params.table.traditionals.hc.both.eyes.difference <- params.table.traditionals.hc.both.eyes
+params.table.traditionals.hc.both.eyes.difference <- params.table.traditionals.hc.both.eyes.difference[order(params.table.traditionals.hc.both.eyes.difference$Eye_ID), ]
+for (i.param in which(!colnames(params.table.traditionals.hc.both.eyes.difference) %in% c("Eye_ID", "Eye", "Age", "Sex", "Type"))) {     # Differnece of all except the mentioned
+  params.table.traditionals.hc.both.eyes.difference[, i.param] <- params.table.traditionals.hc.both.eyes.difference[, i.param] - Hmisc::Lag(params.table.traditionals.hc.both.eyes.difference[, i.param], shift = 1)
+}
+params.table.traditionals.hc.both.eyes.difference <- params.table.traditionals.hc.both.eyes.difference[seq(2, nrow(params.table.traditionals.hc.both.eyes.difference), by = 2), ]
+rownames(params.table.traditionals.hc.both.eyes.difference) <- NULL
+# Calculate the absolute difference
+params.table.traditionals.hc.both.eyes.difference.absolute <- params.table.traditionals.hc.both.eyes.difference
+params.table.traditionals.hc.both.eyes.difference.absolute[, !colnames(params.table.traditionals.hc.both.eyes.difference) %in% c("Eye_ID", "Eye", "Age", "Sex", "Type")] <- abs(params.table.traditionals.hc.both.eyes.difference[, !colnames(params.table.traditionals.hc.both.eyes.difference) %in% c("Eye_ID", "Eye", "Age", "Sex", "Type")])
+
+# combine the eye and eye in the icc analysis data table
+icc.analysis.data$Eye_ID <- paste(icc.analysis.data$Eye_ID, icc.analysis.data$Eye, sep = "_")
+icc.analysis.data.intra.rater$Eye_ID <- paste(icc.analysis.data.intra.rater$Eye_ID, icc.analysis.data.intra.rater$Eye, sep = "_")
+
+# Add Type to the end of samirix.heyex.table 
+samirix.heyex.comparison.table$Type <- "NMO_ON"
+```
+
+This document contains the results of healthy controls data analysis project, which used a semi-automated OCT image segmentation pipeline (SAMIRIX) as the segmentation tool, collected and developed in [Translational Neuroimaging Group (DIAL)](http://neurodial.de/), Charité Universitätsmedizin Berlin. For more information please read the README file. 
+
+We gathered OCT images of healthy controls from differnet projects of our group at the Charite Universitaetmedizin Berlin. Then all were checked by an experienced grader for any neurological and/or other abnormalitities. Here is some general information about the dataset:
+
+```{r data.info, echo=FALSE, results='asis'}
+## OCT params data info
+demo.table <- data.frame(matrix(nrow = 4, ncol = 3))
+colnames(demo.table) <- c(" ", " ", "Range")
+demo.table[1, 1] <- "Subjects"
+demo.table[1, 2] <- paste0(length(unique(params.table.traditionals.hc$Eye_ID)), " (Both eyes present: ", length(unique(params.table.traditionals.hc.both.eyes.difference$Eye_ID)), ")")
+demo.table[2, 1] <- "Eyes"
+demo.table[2, 2] <- paste0(length(params.table.traditionals.hc$Eye_ID), " (OD: ", length(which(params.table.traditionals.hc$Eye == "OD")), 
+                           ", OS: ", length(which(params.table.traditionals.hc$Eye == "OS")), ")")
+demo.table[3, 1] <- "Sex"
+demo.table[3, 2] <- paste0("Female: ", length(unique(params.table.traditionals.hc$Eye_ID[params.table.traditionals.hc$Sex == " f"])), 
+                           ", Male: ", length(unique(params.table.traditionals.hc$Eye_ID[params.table.traditionals.hc$Sex == " m"])))
+demo.table[4, 1] <- "Age, Mean(SD))"
+demo.table[4, 2] <- paste0(round(mean(params.table.traditionals.hc$Age[seq_along(params.table.traditionals.hc$Eye_ID)[!duplicated(params.table.traditionals.hc$Eye_ID)]]), 2), " (", 
+                           round(sd(params.table.traditionals.hc$Age[seq_along(params.table.traditionals.hc$Eye_ID)[!duplicated(params.table.traditionals.hc$Eye_ID)]]), 2), ")")
+demo.table[4, 3] <- paste0(min(params.table.traditionals.hc$Age), " - ", max(params.table.traditionals.hc$Age))
+options(knitr.kable.NA = '')
+kable(demo.table)
+```
+
+Initially, only the healthy controls who had the OCT of both eyes, were selected, and the missing eye measurements in the dataset is the result of quality check. After the quality check, the OCT images were segmented by the semi automatic segmentation pipeline (SAMIRIX), which uses the [JHU segmentation](http://iacl.ece.jhu.edu/index.php/Retinal_layer_segmentation_of_macular_OCT_images) as its segmentation algorithm and [OCT-Marker](https://github.com/neurodial/OCT-Marker) as the manual correction toolbox. 
+
+Among our dataset, for `r length(params.table.traditionals.hc$Eye_ID[!is.na(params.table.traditionals.hc$Refraction_Error)])` eyes (`r length(unique(params.table.traditionals.hc$Eye_ID[!is.na(params.table.traditionals.hc$Refraction_Error)]))` subjects), `r length(params.table.traditionals.hc$Eye_ID[!is.na(params.table.traditionals.hc$High_Contrast_Acuity)])` eyes (`r length(unique(params.table.traditionals.hc$Eye_ID[!is.na(params.table.traditionals.hc$High_Contrast_Acuity)]))` subjects), and `r length(params.table.traditionals.hc$Eye_ID[!is.na(params.table.traditionals.hc$Inter_Ocular_Pressure)])` eyes (`r length(unique(params.table.traditionals.hc$Eye_ID[!is.na(params.table.traditionals.hc$Inter_Ocular_Pressure)]))` subjects) the refraction eeror, high contrast visual acuity, inter ocular preseaure measuremtns were available. Including the analysis of layers thicknesses versus these parameters in the paper should be discussed. 
+
+```{r non.oct.data.info, echo=FALSE, results='asis'}
+## NON-OCT params data info table 
+demo.table <- data.frame(matrix(nrow = 3, ncol = 3))
+colnames(demo.table) <- c(" ", "Mean (SD)", "Range")
+demo.table[1, 1] <- "Refraction Error"
+demo.table[1, 2] <- paste0(round(mean(params.table.traditionals.hc$Refraction_Error, na.rm = TRUE), 2), " (",
+                          round(sd(params.table.traditionals.hc$Refraction_Error, na.rm = TRUE), 2), ")")
+demo.table[1, 3] <- paste0(min(params.table.traditionals.hc$Refraction_Error, na.rm = TRUE), " - ", max(params.table.traditionals.hc$Refraction_Error, na.rm = TRUE))
+demo.table[2, 1] <- "High Contast Visual Acuity"
+demo.table[2, 2] <- paste0(round(mean(params.table.traditionals.hc$High_Contrast_Acuity, na.rm = TRUE), 2), " (",
+                          round(sd(params.table.traditionals.hc$High_Contrast_Acuity, na.rm = TRUE), 2), ")")
+demo.table[2, 3] <- paste0(min(params.table.traditionals.hc$High_Contrast_Acuity, na.rm = TRUE), " - ", max(params.table.traditionals.hc$High_Contrast_Acuity, na.rm = TRUE))
+demo.table[3, 1] <- "Inter-Ocular Pressure"
+demo.table[3, 2] <- paste0(round(mean(params.table.traditionals.hc$Inter_Ocular_Pressure, na.rm = TRUE), 2), " (",
+                          round(sd(params.table.traditionals.hc$Inter_Ocular_Pressure, na.rm = TRUE), 2), ")")
+demo.table[3, 3] <- paste0(min(params.table.traditionals.hc$Inter_Ocular_Pressure, na.rm = TRUE), " - ", max(params.table.traditionals.hc$Inter_Ocular_Pressure, na.rm = TRUE))
+options(knitr.kable.NA = '')
+kable(demo.table)
+```
+
+Before looking at the results, it shoud be mentioned that in this report, each layer were divided to sections accortding to the ETDRS grid.
+
+These are the layers: RNFL (retinal nerve fiber layer), GCIP (combined ganglion cell and inner plexiform layers), INL (inner nuclear layer), TRT (retina thickness), IRL (inner retinal layers), and ORL (outer retinal layers). <br>
+And here are the sub layers: Fovea (C0), Inner Nasal (N1), Outer Nasal (N2), Inner Temporal (T1), Outer Temporal (T2), Inner Superiior (S1), Outer Superior (S2), Inner Inferior (I1), Outer Inferior (I2), Nasal (N1+N2), Temporal (T1+T2), Inferior (I1 + I2), Superior (S1+S2), Inner Ring (N1+T1+S1+I1), Outer Ring (N2+T2+S2+I2), Fovea and Inner Ring (C0+N1+I1+S1+T1), and total (C0+N1+N2+I1+I2+T1+T2+S1+T2). The numbers indicate the average thickness of the selected layer in the selected area. 
+
+## ICC analysis 
+
+In order to measure the inter-rator difference for the manual correction of segmentations, the intra-retinal layers segmentation of 44 eyes (24 subjects) from healthy controls was corrected by two different raters. The layer thicknesses of these eyes were gathered together and the intraclass correlation coefficient (ICC), 95% confidence interval (Upper and lower CI), coefficient of variation (CV), standard error of measurement (SEM), minimum detectable change (MDC), within individual varience (varw), and among individual varience (vara) were clauclated for each layer and section, and reported in the table below. Additionally, the macular OCT of the same 44 eyes was corrected twice by a same rater, in order to measure the intra-rater difference, and the related parameters were reported alongside the inter-rater comparison. 
+
+```{r icc.analysis, echo=FALSE}
+## ICC analysis
+# Define UI
+ui <- fluidPage(
+  inputPanel(
+    # Create the parameter select list
+    selectInput(inputId = "oct.param", 
+                label = "Parameter",
+                choices = c("RNFL (micron)" = "RNFL_micron",
+                            "GCIP (micron)" = "GCIP_micron",
+                            "INL (micron)" = "INL_micron",
+                            "TRT (micron)" = "TRT_micron", 
+                            "IRL (micron)" = "IRL_micron", 
+                            "ORL (micron)" = "ORL_micron"), 
+                selected = "TRT_micron"),
+    selectInput(inputId = "roi",
+                label = "Section: ", 
+                choices = c("Total", "Fovea", "Nasal Inner" = "Nasal_Inner", "Superior Inner" = "Superior_Inner", "Temporal Inner" = "Temporal_Inner", "Inferior Inner" = "Inferior_Inner",
+                            "Nasal Outer" = "Nasal_Outer", "Superior Outer" = "Superior_Outer", "Temporal Outer" = "Temporal_Outer", "Inferior Outer" = "Inferior_Outer", 
+                            "Nasal Total" = "Nasal_Total", "Superior Total" = "Sperior_Total", "Temporal Total" = "Temporal_Total", "Inferior Total" = "Inferior_Total",
+                            "Inner Ring" = "Inner_Ring", "Outer Ring" = "Outer_Ring", "Fovea and Inner Ring (Inner Circle)" = "Fovea_Inner_Ring"),
+                selected = "Total")
+  ),
+  # Define the output plots and tables to be shown in the main panel 
+  tableOutput(outputId = "icc.output.table"),
+  tableOutput(outputId = "icc.output.table.intra.rater")
+)
+
+# Define the Server function
+server <- function(input, output){
+  # Calculate ICC and the related measures, plus CV, SEM and MDC
+  output$icc.output.table <- renderTable({
+    this.param <- icc.analysis.data[, paste(input$oct.param, input$roi, sep = "_")]
+    # Initialize the ICC results table
+    icc.results.table <- data.frame(matrix(nrow = 1, ncol = 11))
+    colnames(icc.results.table) <- c("Inter-rater comparison", "ICC", "Lower CI", "Upper CI", "CV", "SEM", "MDC", "N", "k", "varw", "vara")
+    icc.results.table[1] <- paste(input$oct.param, input$roi, sep = "_")
+    # Calculate ICC and its related variables
+    icc.results.table[c(2:4, 8:11)] <- data.frame(ICCest(icc.analysis.data$Eye_ID, icc.analysis.data[, paste(input$oct.param, input$roi, sep = "_")]))
+    # calculate CV, SEM, and MDC
+    this.param.diff <- this.param - Hmisc::Lag(this.param, shift = 1)
+    this.param.diff <- this.param.diff[seq(2, nrow(icc.analysis.data), by = 2)]
+    icc.results.table[5] <- 100*(2*sd(this.param.diff)/sqrt(2)/
+                                              (mean(this.param[seq(1, nrow(icc.analysis.data)-1, by = 2)])+mean(this.param[seq(2, nrow(icc.analysis.data), by = 2)])))
+    icc.results.table[6] <- sd(this.param)*sqrt(1-icc.results.table[2])
+    icc.results.table[7] <- 1.96*icc.results.table[6]*sqrt(2)
+    icc.results.table
+  }, rownames = FALSE, digits = 5)
+  
+  # Calculate ICC and the related measures, plus CV, SEM and MDC for intra-rater comparison
+  output$icc.output.table.intra.rater <- renderTable({
+    this.param <- icc.analysis.data.intra.rater[, paste(input$oct.param, input$roi, sep = "_")]
+    # Initialize the ICC results table
+    icc.results.table.intra.rater <- data.frame(matrix(nrow = 1, ncol = 11))
+    colnames(icc.results.table.intra.rater) <- c("Intra-rater comparison", "ICC", "Lower CI", "Upper CI", "CV", "SEM", "MDC", "N", "k", "varw", "vara")
+    icc.results.table.intra.rater[1] <- paste(input$oct.param, input$roi, sep = "_")
+    # Calculate ICC and its related variables
+    icc.results.table.intra.rater[c(2:4, 8:11)] <- data.frame(ICCest(icc.analysis.data.intra.rater$Eye_ID, icc.analysis.data.intra.rater[, paste(input$oct.param, input$roi, sep = "_")]))
+    # calculate CV, SEM, and MDC
+    this.param.diff <- this.param - Hmisc::Lag(this.param, shift = 1)
+    this.param.diff <- this.param.diff[seq(2, nrow(icc.analysis.data.intra.rater), by = 2)]
+    icc.results.table.intra.rater[5] <- 100*(2*sd(this.param.diff)/sqrt(2)/
+                                              (mean(this.param[seq(1, nrow(icc.analysis.data.intra.rater)-1, by = 2)])+mean(this.param[seq(2, nrow(icc.analysis.data.intra.rater), by = 2)])))
+    icc.results.table.intra.rater[6] <- sd(this.param)*sqrt(1-icc.results.table.intra.rater[2])
+    icc.results.table.intra.rater[7] <- 1.96*icc.results.table.intra.rater[6]*sqrt(2)
+    icc.results.table.intra.rater
+  }, rownames = FALSE, digits = 5)
+}
+
+# Call the shiny app
+shinyApp(ui, server, options = list(height = 350))
+
+```
+
+## Layer Thickness Distribution
+
+Here comes the density plot, and some information like mean, SD, and CV of each parameter. You can brush on any parts on the dotplot to see the information of the points selected! 
+
+```{r OCT.params.demographic, echo=FALSE}
+## OCT params demographic
+# Define UI
+ui <- fluidPage(
+  sidebarLayout(
+    sidebarPanel(
+      # Create the parameter select list
+      inputPanel(
+        selectInput(inputId = "oct.param", 
+                    label = "Parameter",
+                    choices = c("RNFL (micron)" = "RNFL_micron",
+                                "GCIP (micron)" = "GCIP_micron",
+                                "INL (micron)" = "INL_micron",
+                                "TRT (micron)" = "TRT_micron", 
+                                "IRL (micron)" = "IRL_micron", 
+                                "ORL (micron)" = "ORL_micron"), 
+                    selected = "TRT_micron"),
+        selectInput(inputId = "roi",
+                    label = "Section: ", 
+                    choices = c("Total", "Fovea", "Nasal Inner" = "Nasal_Inner", "Superior Inner" = "Superior_Inner", "Temporal Inner" = "Temporal_Inner", "Inferior Inner" = "Inferior_Inner",
+                                "Nasal Outer" = "Nasal_Outer", "Superior Outer" = "Superior_Outer", "Temporal Outer" = "Temporal_Outer", "Inferior Outer" = "Inferior_Outer", 
+                                "Nasal Total" = "Nasal_Total", "Superior Total" = "Sperior_Total", "Temporal Total" = "Temporal_Total", "Inferior Total" = "Inferior_Total",
+                                "Inner Ring" = "Inner_Ring", "Outer Ring" = "Outer_Ring", "Fovea and Inner Ring (Inner Circle)" = "Fovea_Inner_Ring"))
+      )
+    ),
+    # Define the output plots and tables to be shown in the main panel 
+    mainPanel(
+      plotOutput(outputId = "histogram.plot"),
+      plotOutput(outputId = "param.dot.plot", brush = "density.plot.brushed.points"),
+      tableOutput(outputId = "param.basic.calc.table"),
+      DT::dataTableOutput(outputId = "density.plot.brushed.points.table")
+    )
+  )
+)
+
+# Define the Server function
+server <- function(input, output){
+  # Plot the histogram and normal distribution fitted to it 
+  output$histogram.plot <- renderPlot({
+    selected.param <- paste(input$oct.param, input$roi, sep = "_")
+    g3 <- ggplot(params.table.traditionals.hc, aes_string(x = selected.param))
+    g3 <- g3 + geom_histogram(aes(y=..density..), fill = "White", color = "black")
+    g3 <- g3 + stat_function(fun = dnorm, args = list(mean = mean(params.table.traditionals.hc[, paste(input$oct.param, input$roi, sep = "_")]), 
+                                                      sd = sd(params.table.traditionals.hc[, paste(input$oct.param, input$roi, sep = "_")])))
+    g3 <- g3 + ylab(label = "Density")
+    g3
+  })
+  
+  # Plot a boxplot  and dotplot for parameter (with the whisker up to 1% and 99%)
+  output$param.dot.plot <- renderPlot({
+    selected.param <- paste(input$oct.param, input$roi, sep = "_")
+    this.param <- params.table.traditionals.hc[, selected.param]
+    box.plot.params <- data.frame(y0 = min(this.param), y1 = quantile(this.param, 0.01), y5 = quantile(this.param, 0.05), 
+                                  y95 = quantile(this.param, 0.95), y99 = quantile(this.param, 0.99), y100 = max(this.param))
+    g1 <- ggplot(data = params.table.traditionals.hc, aes_string(x = "Type", y = paste(input$oct.param, input$roi, sep = "_")))
+    g1 <- g1 + geom_boxplot(aes(color = "1% and 99%"), ymax = box.plot.params$y99, ymin = box.plot.params$y1, 
+                            outlier.shape = NULL, lwd = 1.2, fatten = 1)
+    g1 <- g1 + geom_boxplot(aes(color = "5% and 95%"), ymax = box.plot.params$y95, ymin = box.plot.params$y5, 
+                            outlier.shape = NULL, lwd = 1.2, fatten = 1)
+    g1 <- g1 + scale_color_manual(values = c("red", "black"), name = "Whiskers")
+    g1 <- g1 + geom_dotplot(binaxis='y', stackdir='center', dotsize=0.8, binwidth = ((max(this.param)-min(this.param))/50))
+    g1 <- g1 + theme(axis.title.x=element_blank(),axis.text.x=element_blank(),axis.ticks.x=element_blank())
+    g1 <- g1 + ylab(label = selected.param)
+    g1
+  })
+
+  # Calculate average, std, CV, min, and max of the param 
+  output$param.basic.calc.table <- renderTable({
+    selected.param <- paste(input$oct.param, input$roi, sep = "_")
+    this.param <- params.table.traditionals.hc[, selected.param]
+    this.param.basic.calc.table <- data.frame(matrix(ncol = 9, nrow = 1))
+    rownames(this.param.basic.calc.table) <- paste(input$oct.param, input$roi, sep = "_")
+    colnames(this.param.basic.calc.table) <- c("Mean", "STD", "CV (%)", "Min", "Max", "1%", "5%", "95%", "99%")
+    this.param.basic.calc.table[1] <- mean(this.param)
+    this.param.basic.calc.table[2] <- sd(this.param)
+    this.param.basic.calc.table[3] <- (sd(this.param)/mean(this.param))*100
+    this.param.basic.calc.table[4] <- min(this.param)
+    this.param.basic.calc.table[5] <- max(this.param)
+    this.param.basic.calc.table[6] <- quantile(this.param, 0.01)
+    this.param.basic.calc.table[7] <- quantile(this.param, 0.05)
+    this.param.basic.calc.table[8] <- quantile(this.param, 0.95)
+    this.param.basic.calc.table[9] <- quantile(this.param, 0.99)
+    this.param.basic.calc.table
+  }, digits = 2)
+  
+  # Form an output table when brushed
+  output$density.plot.brushed.points.table <- DT::renderDataTable({
+    if (!isempty(input$density.plot.brushed.points)){
+      brushedPoints(params.table.traditionals.hc, input$density.plot.brushed.points) %>% 
+        select(Eye_ID, Eye, paste(input$oct.param, input$roi, sep = "_"), Age, Sex, Refraction_Error, High_Contrast_Acuity, Inter_Ocular_Pressure)
+    }
+  }) 
+}
+
+# Call the shiny app
+shinyApp(ui, server, options = list(height = 930))
+
+```
+
+## OCT parameters vs. Non-OCT parameters 
+
+Following comes the layer thicknessses for different sections againt age, sex, refraction error, high contrast visual acuity, and inter-ocular presssure. You can brush on any parts on the plot to see the information of the points selected! 
+
+```{r OCT.params.analysis, echo=FALSE}
+####### OCT Params Analysis
+# Define UI
+ui <- fluidPage(
+  sidebarLayout(
+    sidebarPanel(
+      # Create the parameter select list to select which OCT parameter is our response variable (y) ad which non-OCT parameter is the explanatory parameter (x)
+      inputPanel(
+        selectInput(inputId = "oct.param", 
+                    label = "Parameter:",
+                    choices = c("RNFL (micron)" = "RNFL_micron",
+                                "GCIP (micron)" = "GCIP_micron",
+                                "INL (micron)" = "INL_micron",
+                                "TRT (micron)" = "TRT_micron", 
+                                "IRL (micron)" = "IRL_micron", 
+                                "ORL (micron)" = "ORL_micron"), 
+                    selected = "TRT_micron"),
+        selectInput(inputId = "explanatory.param",
+                    label = "against:",
+                    choices = c("Age", 
+                                "Sex", 
+                                "Refraction Error" = "Refraction_Error", 
+                                "High Contrast Acuity" = "High_Contrast_Acuity", 
+                                "Inter Ocular Pressure" = "Inter_Ocular_Pressure"),
+                    selected = "Age"),
+        selectInput(inputId = "roi",
+                    label = "Section: ", 
+                    choices = c("Total", "Fovea", "Nasal Inner" = "Nasal_Inner", "Superior Inner" = "Superior_Inner", "Temporal Inner" = "Temporal_Inner", "Inferior Inner" = "Inferior_Inner",
+                                "Nasal Outer" = "Nasal_Outer", "Superior Outer" = "Superior_Outer", "Temporal Outer" = "Temporal_Outer", "Inferior Outer" = "Inferior_Outer", 
+                                "Nasal Total" = "Nasal_Total", "Superior Total" = "Sperior_Total", "Temporal Total" = "Temporal_Total", "Inferior Total" = "Inferior_Total",
+                                "Inner Ring" = "Inner_Ring", "Outer Ring" = "Outer_Ring", "Fovea and Inner Ring (Inner Circle)" = "Fovea_Inner_Ring"))
+      )
+    ),
+    # Define the output plots and tables to be shown in the main panel 
+    mainPanel(
+      plotOutput(outputId = "plot", brush = "brushed.points"),
+      tableOutput(outputId = "table"),
+      DT::dataTableOutput(outputId = "brushed.points.table")
+    )
+  )
+)
+
+# Define Server function
+server <- function(input, output){
+  # Plot the common OCT parameter y vs. another non-OCT param x
+  output$plot <- renderPlot({
+    # if the selected x parameter is Age, RE, HC VA, or IOP
+    if (input$explanatory.param %in% c("Age", "Refraction_Error", "High_Contrast_Acuity", "Inter_Ocular_Pressure")) {
+      g <- ggplot(data = params.table.traditionals.hc, aes_string(x = input$explanatory.param, y = paste(input$oct.param, input$roi, sep="_")))
+      g <- g + geom_point() + geom_smooth(method = "lm", se = TRUE)
+      g
+    } 
+    # if the selected x parameter is Sex or Age 
+    else if (input$explanatory.param %in% c("Sex")) {
+      this.param <- params.table.traditionals.hc[, paste(input$oct.param, input$roi, sep="_")]
+      g <- ggplot(data = params.table.traditionals.hc, aes_string(x = input$explanatory.param, y = paste(input$oct.param, input$roi, sep="_")))
+      g <- g + geom_boxplot(outlier.shape = NULL, lwd = 1.2, fatten = 1)
+      g <- g + geom_dotplot(binaxis='y', stackdir='center', dotsize=0.8, binwidth = ((max(this.param)-min(this.param))/50))
+      g
+    }
+  })
+
+  # Calculate  LMM analysis table for the common OCT parameter (y) vs. the other non-OCT parameter (x)
+  output$table <- renderTable({
+    # if the selected x parameter is Age, RE, HC VA, or IOP
+    if (input$explanatory.param %in% c("Age", "Refraction_Error", "High_Contrast_Acuity", "Inter_Ocular_Pressure")) {
+      params.table.traditionals.hc <- params.table.traditionals.hc
+      model <- lmerTest::lmer(params.table.traditionals.hc[, paste(input$oct.param, input$roi, sep="_")] ~ params.table.traditionals.hc[, input$explanatory.param] + (1|Eye_ID), 
+                              data = params.table.traditionals.hc)
+      model.r.squared <- r.squaredGLMM(model)
+      output.table <- data.frame(matrix(nrow = 1, ncol = 6))
+      output.table[1] <- paste0(paste(input$oct.param, input$roi, sep="_"), " ~ ", input$explanatory.param, " + (1|Patient_ID)")
+      colnames(output.table) <- c("Formula", "B", "SE", "P-Value", "Marg. R^2", "Cond. R^2")
+      output.table[2:4] <- summary(model)$coefficients[2, c(1, 2, 5)]
+      output.table[5:6] <- model.r.squared
+      output.table
+    }
+    # if the selected x parameter is Sex or Age 
+    else if (input$explanatory.param %in% c("Sex")) {
+      params.table.traditionals.hc <- params.table.traditionals.hc
+      model <- lmerTest::lmer(params.table.traditionals.hc[, paste(input$oct.param, input$roi, sep="_")] ~ params.table.traditionals.hc[, input$explanatory.param] + (1|Eye_ID), 
+                              data = params.table.traditionals.hc)
+      model.r.squared <- r.squaredGLMM(model)
+      x.param.levels <- unique(params.table.traditionals.hc[, input$explanatory.param])
+      output.table <- data.frame(matrix(nrow = 1, ncol = 16))
+      output.table[1] <- paste0(paste(input$oct.param, input$roi, sep="_"), " ~ ", input$explanatory.param, " + (1|Patient_ID)")
+      colnames(output.table) <- c("Formula", "B", "SE", "P-Value", "Marg. R^2", "Cond. R^2", paste(x.param.levels[1], "Mean"), 
+                                  "STD", "CV (%)", "Max", "Min", paste(x.param.levels[2], "Mean"), "STD", "CV (%)", "Max", "Min")
+      output.table[2:4] <- summary(model)$coefficients[2, c(1, 2, 5)]
+      output.table[5:6] <- model.r.squared
+      output.table[7] <- mean(params.table.traditionals.hc[params.table.traditionals.hc[, input$explanatory.param]==x.param.levels[1], paste(input$oct.param, input$roi, sep="_")])
+      output.table[8] <- sd(params.table.traditionals.hc[params.table.traditionals.hc[, input$explanatory.param]==x.param.levels[1], paste(input$oct.param, input$roi, sep="_")])
+      output.table[9] <- output.table[6]/output.table[5]*100
+      output.table[10] <- max(params.table.traditionals.hc[params.table.traditionals.hc[, input$explanatory.param]==x.param.levels[1], paste(input$oct.param, input$roi, sep="_")])
+      output.table[11] <- min(params.table.traditionals.hc[params.table.traditionals.hc[, input$explanatory.param]==x.param.levels[1], paste(input$oct.param, input$roi, sep="_")])
+      output.table[12] <- mean(params.table.traditionals.hc[params.table.traditionals.hc[, input$explanatory.param]==x.param.levels[2], paste(input$oct.param, input$roi, sep="_")])
+      output.table[13] <- sd(params.table.traditionals.hc[params.table.traditionals.hc[, input$explanatory.param]==x.param.levels[2], paste(input$oct.param, input$roi, sep="_")])
+      output.table[14] <- output.table[11]/output.table[10]*100
+      output.table[15] <- max(params.table.traditionals.hc[params.table.traditionals.hc[, input$explanatory.param]==x.param.levels[2], paste(input$oct.param, input$roi, sep="_")])
+      output.table[16] <- min(params.table.traditionals.hc[params.table.traditionals.hc[, input$explanatory.param]==x.param.levels[2], paste(input$oct.param, input$roi, sep="_")])
+      output.table
+    }
+  }, digits = 5, align = 'l')
+  
+  # Form an output table when brushed
+  output$brushed.points.table <- DT::renderDataTable({
+    if (!isempty(input$brushed.points)){
+      if (input$explanatory.param %in% c("Refraction_Error", "High_Contrast_Acuity", "Inter_Ocular_Pressure")) {
+        brushed.points.table <- brushedPoints(params.table.traditionals.hc, input$brushed.points) %>% 
+          select(Eye_ID, Eye, paste(input$oct.param, input$roi, sep = "_"), Age, Sex, Refraction_Error, High_Contrast_Acuity, Inter_Ocular_Pressure)
+        brushed.points.table[complete.cases(brushed.points.table), ]
+      } else {
+        brushed.points.table <- brushedPoints(params.table.traditionals.hc, input$brushed.points) %>% 
+          select(Eye_ID, Eye, paste(input$oct.param, input$roi, sep = "_"), Age, Sex, Refraction_Error, High_Contrast_Acuity, Inter_Ocular_Pressure)
+        brushed.points.table
+      }
+    }
+  }) 
+}
+
+# Call the shiny app
+shinyApp(ui, server, options = list(height = 580))
+
+```
+
+## Inter-Ocular differences
+
+First comes some descriptive statistics of the absolute differences for different layers. 
+
+```{r OCT.differnecces.descriptive, echo=FALSE}
+########## Calculate Mean, STD, CV, and etc of the intra-ocular differences for different OCT parameters 
+# Define UI
+ui <- fluidPage(
+  sidebarLayout(
+    sidebarPanel(
+      # Create the parameter select list to select OCT parameter
+      inputPanel(
+        selectInput(inputId = "oct.param", 
+                    label = "Parameter:",
+                    choices = c("RNFL absolute inter-ocular difference (micron)" = "RNFL_micron",
+                                "GCIP absolute inter-ocular difference (micron)" = "GCIP_micron",
+                                "INL absolute inter-ocular difference (micron)" = "INL_micron",
+                                "TRT absolute inter-ocular difference (micron)" = "TRT_micron", 
+                                "IRL absolute inter-ocular difference (micron)" = "IRL_micron", 
+                                "ORL absolute inter-ocular difference (micron)" = "ORL_micron"), 
+                    selected = "TRT_micron")
+      )
+    ),
+    # Define the output plots and tables to be shown in the main panel 
+    mainPanel(
+      tableOutput(outputId = "demo.stat.table")
+    )
+  )
+)
+
+# Define Server function
+server <- function(input, output){
+  # Calculate average, std, CV, min, and max of the param 
+  output$demo.stat.table <- renderTable({
+    this.param <-  params.table.traditionals.hc.both.eyes.difference.absolute[, paste0(input$oct.param, "_Total")]
+    this.param.basic.calc.table <- data.frame(matrix(ncol = 9, nrow = 1))
+    rownames(this.param.basic.calc.table) <- paste(input$oct.param, input$roi, sep = "_")
+    colnames(this.param.basic.calc.table) <- c("Mean", "STD", "CV (%)", "Min", "Max", "1%", "5%", "95%", "99%")
+    this.param.basic.calc.table[1] <- mean(this.param)
+    this.param.basic.calc.table[2] <- sd(this.param)
+    this.param.basic.calc.table[3] <- (sd(this.param)/mean(this.param))*100
+    this.param.basic.calc.table[4] <- min(this.param)
+    this.param.basic.calc.table[5] <- max(this.param)
+    this.param.basic.calc.table[6] <- quantile(this.param, 0.01)
+    this.param.basic.calc.table[7] <- quantile(this.param, 0.05)
+    this.param.basic.calc.table[8] <- quantile(this.param, 0.95)
+    this.param.basic.calc.table[9] <- quantile(this.param, 0.99)
+    this.param.basic.calc.table
+  }, digits = 2)
+}
+
+# Call the shiny app
+shinyApp(ui, server, options = list(height = 210))
+
+```
+
+At the end, comes the absolute inter-ocular thickness differences against age and sex, and thickness differences against RE, HCVA, or IOP differences. Again you can brush on the plot and see the information of the points selected.
+
+```{r interocular.params.analysis, echo=FALSE}
+##### Inter Ocular Params Analysis
+# Define UI
+ui <- fluidPage(
+  sidebarLayout(
+    sidebarPanel(
+      # Create the parameter select list to select which OCT parameter is our response variable (y) ad which non-OCT parameter is the explanatory parameter (x)
+      inputPanel(
+        selectInput(inputId = "oct.param", 
+                    label = "Parameter:",
+                    choices = c("RNFL (micron)" = "RNFL_micron",
+                                "GCIP (micron)" = "GCIP_micron",
+                                "INL (micron)" = "INL_micron",
+                                "TRT (micron)" = "TRT_micron", 
+                                "IRL (micron)" = "IRL_micron", 
+                                "ORL (micron)" = "ORL_micron"), 
+                    selected = "TRT_micron"),
+        selectInput(inputId = "explanatory.param",
+                    label = "against:",
+                    choices = c("Age", 
+                                "Sex", 
+                                "Refraction Error" = "Refraction_Error", 
+                                "High Contrast Acuity" = "High_Contrast_Acuity", 
+                                "Inter Ocular Pressure" = "Inter_Ocular_Pressure"),
+                    selected = "Age"
+        )
+      )
+    ),
+    # Define the output plots and tables to be shown in the main panel 
+    mainPanel(
+      plotOutput(outputId = "plot", brush = "brushed.points"),
+      tableOutput(outputId = "table"),
+      DT::dataTableOutput(outputId = "brushed.points.table")
+    )
+  )
+)
+
+# Define Server function
+server <- function(input, output){
+  # Plot the common OCT parameter y vs. another non-OCT param x
+  output$plot <- renderPlot({
+    # if the selected x parameter is Age, RE, HC VA, or IOP
+    if (input$explanatory.param == "Age") {
+    g <- ggplot(data = params.table.traditionals.hc.both.eyes.difference.absolute, aes_string(x = input$explanatory.param, y = paste0(input$oct.param, "_Total")))
+      g <- g + geom_point() + geom_smooth(method = "lm", se = TRUE)
+      g <- g + ylab(paste('|', paste0(input$oct.param, "_Total"), 'OD -', paste0(input$oct.param, "_Total"), 'OS', '|'))
+      g      
+    }
+    else if (input$explanatory.param %in% c("Refraction_Error", "High_Contrast_Acuity", "Inter_Ocular_Pressure")) {
+      g <- ggplot(data = params.table.traditionals.hc.both.eyes.difference, aes_string(x = input$explanatory.param, y = paste0(input$oct.param, "_Total")))
+      g <- g + geom_point() + geom_smooth(method = "lm", se = TRUE)
+      g <- g + ylab(paste(paste0(input$oct.param, "_Total"), 'OD -', paste0(input$oct.param, "_Total"), 'OS')) + xlab(paste(input$explanatory.param, 'OD -', input$explanatory.param, 'OS')) 
+      g
+    } 
+    # if the selected x parameter is Sex or Age 
+    else if (input$explanatory.param == "Sex") {
+      this.param <- params.table.traditionals.hc.both.eyes.difference.absolute[, paste0(input$oct.param, "_Total")]
+      g <- ggplot(data = params.table.traditionals.hc.both.eyes.difference.absolute, aes_string(x = input$explanatory.param, y = paste0(input$oct.param, "_Total")))
+      g <- g + geom_boxplot(outlier.shape = NULL, lwd = 1.2, fatten = 1)
+      g <- g + geom_dotplot(binaxis='y', stackdir='center', dotsize=0.8, binwidth = ((max(this.param)-min(this.param))/50))
+      g <- g + ylab(paste('|', paste0(input$oct.param, "_Total"), 'OD -', paste0(input$oct.param, "_Total"), 'OS', '|'))
+      g
+    }
+  })
+
+  # Calculate  LMM analysis table for the common OCT parameter (y) vs. the other non-OCT parameter (x)
+  output$table <- renderTable({
+    # if the selected x parameter is Age
+    if (input$explanatory.param%in% c("Age", "Sex")) {
+      model <- lm(params.table.traditionals.hc.both.eyes.difference.absolute[, paste0(input$oct.param, "_Total")] ~ params.table.traditionals.hc.both.eyes.difference.absolute[, input$explanatory.param])
+      output.table <- data.frame(matrix(nrow = 1, ncol = 5))
+      output.table[1] <- paste0("lm(", paste0(input$oct.param, "_Total"), " abs(OD - OS) ~ ", input$explanatory.param, ")")
+      colnames(output.table) <- c("Formula", "B", "SE", "P Value", "Adj. R^2")
+      output.table[2:4] <- summary(model)$coefficients[2, c(1, 2, 4)]
+      output.table[5] <- summary(model)$adj.r.squared
+      output.table
+    }
+    # if the selected x parameter is RE, HC VA, or IOP
+    else if (input$explanatory.param %in% c("Refraction_Error", "High_Contrast_Acuity", "Inter_Ocular_Pressure")) {
+      model <- lm(params.table.traditionals.hc.both.eyes.difference[, paste0(input$oct.param, "_Total")] ~ params.table.traditionals.hc.both.eyes.difference[, input$explanatory.param])
+      output.table <- data.frame(matrix(nrow = 1, ncol = 5))
+      output.table[1] <- paste0("lm(", paste0(input$oct.param, "_Total"), " (OD - OS) ~  ", input$explanatory.param, " (OD - OS))")
+      colnames(output.table) <- c("Formula", "B", "SE", "P Value", "Adj. R^2")
+      output.table[2:4] <- summary(model)$coefficients[2, c(1, 2, 4)]
+      output.table[5] <- summary(model)$adj.r.squared
+      output.table
+    }
+  }, digits = 5, align = 'l')
+  
+  # Form an output table when brushed
+  output$brushed.points.table <- DT::renderDataTable({
+    if (!isempty(input$brushed.points)){
+      if (input$explanatory.param %in% c("Refraction_Error", "High_Contrast_Acuity", "Inter_Ocular_Pressure")) {
+        brushed.points.table <- brushedPoints(params.table.traditionals.hc.both.eyes.difference, input$brushed.points) %>% 
+          select(Eye_ID, Eye, paste0(input$oct.param, "_Total"), Age, Sex, Refraction_Error, High_Contrast_Acuity, Inter_Ocular_Pressure)
+        brushed.points.table[complete.cases(brushed.points.table), ]
+      } else {
+        brushed.points.table <- brushedPoints(params.table.traditionals.hc.both.eyes.difference.absolute, input$brushed.points) %>% 
+          select(Eye_ID, Eye, paste0(input$oct.param, "_Total"), Age, Sex, Refraction_Error, High_Contrast_Acuity, Inter_Ocular_Pressure)
+        brushed.points.table
+      }
+    }
+  }) 
+}
+
+# Call the shiny app
+shinyApp(ui, server, options = list(height = 580))
+
+```
+
+## OCT parameters vs. OCT parameters 
+
+Following comes OCT parameters plotted against each other. You can brush on any parts on the plot to see the information of the points selected! 
+
+```{r OCT.params.analysis.2, echo=FALSE}
+####### OCT Params Analysis
+# Define UI
+ui <- fluidPage(
+  sidebarLayout(
+    sidebarPanel(
+      # Create the parameter select list to select which OCT parameter is our response variable (y) ad which non-OCT parameter is the explanatory parameter (x)
+      inputPanel(
+        selectInput(inputId = "oct.param.x", 
+                    label = "Parameter (x):",
+                    choices = c("RNFL (micron)" = "RNFL_micron",
+                                "GCIP (micron)" = "GCIP_micron",
+                                "INL (micron)" = "INL_micron",
+                                "TRT (micron)" = "TRT_micron", 
+                                "IRL (micron)" = "IRL_micron", 
+                                "ORL (micron)" = "ORL_micron"), 
+                    selected = "GCIP_micron"),
+        selectInput(inputId = "oct.param.y", 
+                    label = "Parameter (y):",
+                    choices = c("RNFL (micron)" = "RNFL_micron",
+                                "GCIP (micron)" = "GCIP_micron",
+                                "INL (micron)" = "INL_micron",
+                                "TRT (micron)" = "TRT_micron", 
+                                "IRL (micron)" = "IRL_micron", 
+                                "ORL (micron)" = "ORL_micron"), 
+                    selected = "INL_micron"),
+        selectInput(inputId = "roi",
+                    label = "Section: ", 
+                    choices = c("Total", "Fovea", "Nasal Inner" = "Nasal_Inner", "Superior Inner" = "Superior_Inner", "Temporal Inner" = "Temporal_Inner", "Inferior Inner" = "Inferior_Inner",
+                                "Nasal Outer" = "Nasal_Outer", "Superior Outer" = "Superior_Outer", "Temporal Outer" = "Temporal_Outer", "Inferior Outer" = "Inferior_Outer", 
+                                "Nasal Total" = "Nasal_Total", "Superior Total" = "Sperior_Total", "Temporal Total" = "Temporal_Total", "Inferior Total" = "Inferior_Total",
+                                "Inner Ring" = "Inner_Ring", "Outer Ring" = "Outer_Ring", "Fovea and Inner Ring (Inner Circle)" = "Fovea_Inner_Ring"))
+      )
+    ),
+    # Define the output plots and tables to be shown in the main panel 
+    mainPanel(
+      plotOutput(outputId = "plot", brush = "brushed.points"),
+      tableOutput(outputId = "table"),
+      DT::dataTableOutput(outputId = "brushed.points.table")
+    )
+  )
+)
+
+# Define Server function
+server <- function(input, output){
+  # Plot the common OCT parameter y vs. another non-OCT param x
+  output$plot <- renderPlot({
+    # if the selected x parameter is Age, RE, HC VA, or IOP
+    g <- ggplot(data = params.table.traditionals.hc, aes_string(x = paste(input$oct.param.x, input$roi, sep="_"), y = paste(input$oct.param.y, input$roi, sep="_")))
+    g <- g + geom_point() + geom_smooth(method = "lm", se = TRUE) + coord_fixed()
+    g
+  })
+
+  # Calculate  LMM analysis table for the common OCT parameter (y) vs. the other non-OCT parameter (x)
+  output$table <- renderTable({
+    params.table.traditionals.hc <- params.table.traditionals.hc
+    model <- lmerTest::lmer(params.table.traditionals.hc[, paste(input$oct.param.y, input$roi, sep="_")] ~ params.table.traditionals.hc[, paste(input$oct.param.x, input$roi, sep="_")] + (1|Eye_ID), 
+                              data = params.table.traditionals.hc)
+    model.r.squared <- r.squaredGLMM(model)
+    correlation.output <- cor.test(params.table.traditionals.hc[, paste(input$oct.param.y, input$roi, sep="_")], params.table.traditionals.hc[, paste(input$oct.param.x, input$roi, sep="_")])
+    output.table <- data.frame(matrix(nrow = 1, ncol = 8))
+    output.table[1] <- paste0(paste(input$oct.param.y, input$roi, sep="_"), " ~ ", paste(input$oct.param.x, input$roi, sep="_"), " + (1|Patient_ID)")
+    colnames(output.table) <- c("Formula", "B", "SE", "P-Value", "Marg. R^2", "Cond. R^2", "r", "r p-value")
+    output.table[2:4] <- summary(model)$coefficients[2, c(1, 2, 5)]
+    output.table[5:6] <- model.r.squared
+    output.table[7] <- correlation.output$estimate
+    output.table[8] <- correlation.output$p.value
+    output.table
+  }, digits = 5, align = 'l')
+  
+  # Form an output table when brushed
+  output$brushed.points.table <- DT::renderDataTable({
+    if (!isempty(input$brushed.points)){
+      brushed.points.table <- brushedPoints(params.table.traditionals.hc, input$brushed.points) %>% 
+        select(Eye_ID, Eye, paste(input$oct.param.x, input$roi, sep = "_"), paste(input$oct.param.y, input$roi, sep = "_"), Age, Sex)
+      brushed.points.table
+    }
+  }) 
+}
+
+# Call the shiny app
+shinyApp(ui, server, options = list(height = 580))
+
+```
+
+## SAMIRIX vs HEYEX
+
+In order to compare the performance of SAMIRIX to Heidelberg Eye Explorer, 20 OCT images from NMO patients with Optic Neuritis was randomly selected. The selected OCT scans were segmented by both software, and then the duration and the amount of corrections were compared. The table below shows some information about the timings for the correction in each software, as well as the average total amount of corrections (the total amount of corrections for all five boundaries (ILM, RNFL-GCL (RNFL), IPL-INL (IPL), INL-OPL (INL), and BM) divided to the number of A-Scans in the 6mm diameter circle around the fovea (the ETDRS circle)). Also, there is a dotplot showing the distribution of the amount of corrections for the selected layer in the selected area.  You can brush on any parts on the dotplot to see the information of the points selected! 
+
+```{r heyex.vs.samirix.info, results='asis'}
+# Form the table
+heyex.samirix.info.table <- as.data.frame((matrix(nrow = 2, ncol = 8)))
+rownames(heyex.samirix.info.table) <- c("SAMIRIX", "HEYEX")
+colnames(heyex.samirix.info.table) <- c("Duration (M: minutes, S: seconds) Mean", "Median", "Min", "Max", "Average Corrections All Boundaries (micron)  Mean", "Median", "Min", "Max")
+
+# Calculate the parameters 
+heyex.samirix.info.table[1, 1] <- as.character(seconds_to_period(floor(mean(samirix.heyex.comparison.table$Samirix_timings_seconds))))
+heyex.samirix.info.table[1, 2] <- as.character(seconds_to_period(floor(median(samirix.heyex.comparison.table$Samirix_timings_seconds))))
+heyex.samirix.info.table[1, 3] <- as.character(seconds_to_period(min(samirix.heyex.comparison.table$Samirix_timings_seconds)))
+heyex.samirix.info.table[1, 4] <- as.character(seconds_to_period(max(samirix.heyex.comparison.table$Samirix_timings_seconds)))
+heyex.samirix.info.table[1, 5] <- mean(samirix.heyex.comparison.table$Samirix_Total_correction_all_layers_micron)
+heyex.samirix.info.table[1, 6] <- median(samirix.heyex.comparison.table$Samirix_Total_correction_all_layers_micron)
+heyex.samirix.info.table[1, 7] <- min(samirix.heyex.comparison.table$Samirix_Total_correction_all_layers_micron)
+heyex.samirix.info.table[1, 8] <- max(samirix.heyex.comparison.table$Samirix_Total_correction_all_layers_micron)
+heyex.samirix.info.table[2, 1] <- as.character(seconds_to_period(floor(mean(samirix.heyex.comparison.table$Heyex_timings_seconds))))
+heyex.samirix.info.table[2, 2] <- as.character(seconds_to_period(floor(median(samirix.heyex.comparison.table$Heyex_timings_seconds))))
+heyex.samirix.info.table[2, 3] <- as.character(seconds_to_period(min(samirix.heyex.comparison.table$Heyex_timings_seconds)))
+heyex.samirix.info.table[2, 4] <- as.character(seconds_to_period(max(samirix.heyex.comparison.table$Heyex_timings_seconds)))
+heyex.samirix.info.table[2, 5] <- mean(samirix.heyex.comparison.table$Heyex_Total_correction_all_layers_micron)
+heyex.samirix.info.table[2, 6] <- median(samirix.heyex.comparison.table$Heyex_Total_correction_all_layers_micron)
+heyex.samirix.info.table[2, 7] <- min(samirix.heyex.comparison.table$Heyex_Total_correction_all_layers_micron)
+heyex.samirix.info.table[2, 8] <- max(samirix.heyex.comparison.table$Heyex_Total_correction_all_layers_micron)
+
+kable(heyex.samirix.info.table)
+```
+
+```{r Heyex.samirix.demographic}
+## OCT params demographic
+# Define UI
+ui <- fluidPage(
+  sidebarLayout(
+    sidebarPanel(
+      # Create the parameter select list
+      inputPanel(
+        selectInput(inputId = "software", 
+                    label = "Software", 
+                    choices = c("SAMIRIX" = "Samirix",
+                                "HEYEX" = "Heyex")),
+        selectInput(inputId = "oct.param", 
+                    label = "Parameter",
+                    choices = c("RNFL Average Correction (micron)" = "Difference_RNFL_micron",
+                                "IPL Average Correction (micron)" = "Difference_IPL_micron",
+                                "INL Average Correction (micron)" = "Difference_INL_micron",
+                                "ILM Average Correction (micron)" = "Difference_ILM_micron", 
+                                "BM Average Correction (micron)" = "Difference_BM_micron")),
+        selectInput(inputId = "roi",
+                    label = "Section: ", 
+                    choices = c("Total", "Fovea", "Nasal Inner" = "Nasal_Inner", "Superior Inner" = "Superior_Inner", "Temporal Inner" = "Temporal_Inner", "Inferior Inner" = "Inferior_Inner",
+                                "Nasal Outer" = "Nasal_Outer", "Superior Outer" = "Superior_Outer", "Temporal Outer" = "Temporal_Outer", "Inferior Outer" = "Inferior_Outer", 
+                                "Nasal Total" = "Nasal_Total", "Superior Total" = "Sperior_Total", "Temporal Total" = "Temporal_Total", "Inferior Total" = "Inferior_Total",
+                                "Inner Ring" = "Inner_Ring", "Outer Ring" = "Outer_Ring", "Fovea and Inner Ring (Inner Circle)" = "Fovea_Inner_Ring"))
+      )
+    ),
+    # Define the output plots and tables to be shown in the main panel 
+    mainPanel(
+      plotOutput(outputId = "param.dot.plot", brush = "density.plot.brushed.points"),
+      tableOutput(outputId = "param.basic.calc.table"),
+      DT::dataTableOutput(outputId = "density.plot.brushed.points.table")
+    )
+  )
+)
+
+# Define the Server function
+server <- function(input, output){
+  # Plot a boxplot  and dotplot for parameter (with the whisker up to 1% and 99%)
+  output$param.dot.plot <- renderPlot({
+    selected.param <- paste(input$software, input$oct.param, input$roi, sep = "_")
+    this.param <- samirix.heyex.comparison.table[, selected.param]
+    g1 <- ggplot(data = samirix.heyex.comparison.table, aes_string(x = "Type", y = paste(input$software, input$oct.param, input$roi, sep = "_")))
+    g1 <- g1 + geom_dotplot(binaxis='y', stackdir='center', dotsize=0.8, binwidth = ((max(this.param)-min(this.param))/50))
+    g1 <- g1 + theme(axis.title.x=element_blank(),axis.text.x=element_blank(),axis.ticks.x=element_blank())
+    g1 <- g1 + ylab(label = selected.param)
+    g1
+  })
+
+  # Calculate average, std, CV, min, and max of the param 
+  output$param.basic.calc.table <- renderTable({
+    selected.param <- paste(input$software, input$oct.param, input$roi, sep = "_")
+    this.param <- samirix.heyex.comparison.table[, selected.param]
+    this.param.basic.calc.table <- data.frame(matrix(ncol = 6, nrow = 1))
+    rownames(this.param.basic.calc.table) <- paste(input$oct.param, input$roi, sep = "_")
+    colnames(this.param.basic.calc.table) <- c("Mean", "Median", "STD", "CV (%)", "Min", "Max")
+    this.param.basic.calc.table[1] <- mean(this.param)
+    this.param.basic.calc.table[2] <- median(this.param)
+    this.param.basic.calc.table[3] <- sd(this.param)
+    this.param.basic.calc.table[4] <- (sd(this.param)/mean(this.param))*100
+    this.param.basic.calc.table[5] <- min(this.param)
+    this.param.basic.calc.table[6] <- max(this.param)
+    this.param.basic.calc.table
+  }, digits = 5)
+  
+  # Form an output table when brushed
+  output$density.plot.brushed.points.table <- DT::renderDataTable({
+    if (!isempty(input$density.plot.brushed.points)){
+      brushedPoints(samirix.heyex.comparison.table, input$density.plot.brushed.points) %>% 
+        select(Eye_ID, Eye, paste(input$software, "timings_seconds", sep = "_"), paste(input$software, input$oct.param, input$roi, sep = "_"))
+    }
+  }) 
+}
+
+# Call the shiny app
+shinyApp(ui, server, options = list(height = 500))
+
+```
